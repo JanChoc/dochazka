@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { supabase } from "../../lib/supabase";
-import { roundDownTo15Minutes, formatMsToHHMM } from "../../lib/time";
+import { supabase } from "../lib/supabase";
+import { roundDownTo15Minutes, formatMsToHHMM } from "../lib/time";
 import * as XLSX from "xlsx";
 
 type Profile = {
