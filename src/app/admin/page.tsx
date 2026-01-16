@@ -1,88 +1,159 @@
 "use client";
-import { useState } from "react";
-import { supabase } from/ "@/lib/supabase";
-import { formatMsToHHMM, roundDownT/o15Minutes } from "@/lib/time";
+
+import { useEffect, useState } from "react";
+import { supabase } from "../../lib/supabase";
+import { roundDownTo15Minutes, formatMsToHHMM } from "../../lib/time";
 import * as XLSX from "xlsx";
 
-export default function AdminPage() {
-  const [year, setYear] = useState(new Date().getFullYear());
-  const [month, setMonth] = useState(new Date().getMonth() + 1);
+type Profile = {
+  user_id: string;
+  full_name: string;
+  role: string;
+};
 
-  async function exportXlsx() {
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 1);
-    const { data: profiles, error: profErr } = await supabase.from("profiles").select("user_id, full_name, role");
-    if (profErr) {
-      alert(profErr.message);
-      return;
-    }
-    const { data: shifts, error: shiftErr } = await supabase
-      .from("shifts")
-      .select("id,user_id,start_at,end_at")
-      .gte("start_at", startDate.toISOString())
-      .lt("start_at", endDate.toISOString());
-    if (shiftErr) {
-      alert(shiftErr.message);
-      return;
-    }
-    const byUser: Record<string, any[]> = {};
-    for (const shift of shifts ?? []) {
-      if (!byUser[shift.user_id]) byUser[shift.user_id] = [];
-      byUser[shift.user_id].push(shift);
-    }
-    const summary: any[] = [];
-    for (const profile of profiles ?? []) {
-      const userShifts = byUser[profile.user_id] ?? [];
-      let totalRawMs = 0;
-      let totalRoundedMs = 0;
-      for (const shift of userShifts) {
-        if (!shift.end_at) continue;
-        const diff = new Date(shift.end_at).getTime() - new Date(shift.start_at).getTime();
-        totalRawMs += diff;
-        totalRoundedMs += roundDownTo15Minutes(diff);
-      }
-      summary.push({
-        "Jméno": profile.full_name,
-        Role: profile.role,
-        "Počet směn": userShifts.length,
-        "Odpracováno (raw)": formatMsToHHMM(totalRawMs),
-        "Odpracováno (15m)": formatMsToHHMM(totalRoundedMs),
+type Shift = {
+  id: string;
+  user_id: string;
+  start_at: string;
+  end_at: string | null;
+};
+
+/**
+ * Admin page to view monthly summaries and export them as XLSX.
+ */
+export default function AdminPage() {
+  const [user, setUser] = useState<any>(null);
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [shifts, setShifts] = useState<Shift[]>([]);
+  const [month, setMonth] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  });
+
+  // Load current user
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => setUser(user));
+  }, []);
+
+  // Load profiles and shifts whenever user or month changes
+  useEffect(() => {
+    if (!user) return;
+    const loadData = async () => {
+      const { data: profilesData, error: profilesError } = await supabase
+        .from("profiles")
+        .select("user_id, full_name, role");
+      if (!profilesError) setProfiles(profilesData ?? []);
+
+      const [y, m] = month.split("-").map(Number);
+      const startDate = new Date(Date.UTC(y, m - 1, 1, 0, 0, 0));
+      const endDate = new Date(Date.UTC(y, m, 1, 0, 0, 0));
+      const { data: shiftsData, error: shiftsError } = await supabase
+        .from("shifts")
+        .select("id, user_id, start_at, end_at")
+        .gte("start_at", startDate.toISOString())
+        .lt("start_at", endDate.toISOString());
+      if (!shiftsError) setShifts(shiftsData ?? []);
+    };
+    loadData();
+  }, [user, month]);
+
+  /**
+   * Compute the total rounded duration (ms) for a given user in the current month.
+   */
+  const computeUserSummary = (uid: string): number => {
+    const userShifts = shifts.filter((s) => s.user_id === uid && s.end_at);
+    let totalMs = 0;
+    userShifts.forEach((s) => {
+      const start = new Date(s.start_at).getTime();
+      const end = new Date(s.end_at as string).getTime();
+      const diff = end - start;
+      const rounded = roundDownTo15Minutes(diff);
+      totalMs += rounded;
+    });
+    return totalMs;
+  };
+
+  /**
+   * Export the monthly data to an XLSX file with a summary and detail sheet.
+   */
+  const exportXLSX = () => {
+    const summaryData: any[] = [];
+    profiles.forEach((p) => {
+      const totalMs = computeUserSummary(p.user_id);
+      summaryData.push({
+        Jméno: p.full_name,
+        "Odpracováno (15m)": formatMsToHHMM(totalMs),
       });
-    }
+    });
+    const wsSummary = XLSX.utils.json_to_sheet(summaryData);
+
+    const detailData: any[] = [];
+    shifts.forEach((s) => {
+      if (!s.end_at) return;
+      const rawMs = new Date(s.end_at).getTime() - new Date(s.start_at).getTime();
+      const roundedMs = roundDownTo15Minutes(rawMs);
+      detailData.push({
+        Jméno: profiles.find((p) => p.user_id === s.user_id)?.full_name ?? s.user_id,
+        Začátek: new Date(s.start_at).toLocaleString(),
+        Konec: new Date(s.end_at).toLocaleString(),
+        "Odpracováno (raw)": formatMsToHHMM(rawMs),
+        "Odpracováno (15m)": formatMsToHHMM(roundedMs),
+      });
+    });
+    const wsDetail = XLSX.utils.json_to_sheet(detailData);
+
     const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(summary);
-    XLSX.utils.book_append_sheet(wb, ws, "Souhrn");
-    XLSX.writeFile(wb, `dochazka-${year}-${String(month).padStart(2, "0")}.xlsx`);
-  }
+    XLSX.utils.book_append_sheet(wb, wsSummary, "Souhrn");
+    XLSX.utils.book_append_sheet(wb, wsDetail, "Detail");
+    const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    const blob = new Blob([wbout], { type: "application/octet-stream" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `dochazka-${month}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  if (!user) return <main style={{ padding: "1rem" }}>Načítání…</main>;
 
   return (
-    <main style={{ padding: 24 }}>
-      <h1>Admin export</h1>
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <label>
-          Rok:
-          <input
-            type="number"
-            value={year}
-            onChange={(e) => setYear(parseInt(e.target.value, 10) || 0)}
-            style={{ marginLeft: 4 }}
-          />
-        </label>
-        <label>
-          Měsíc:
-          <input
-            type="number"
-            value={month}
-            min={1}
-            max={12}
-            onChange={(e) => setMonth(parseInt(e.target.value, 10) || 0)}
-            style={{ marginLeft: 4 }}
-          />
-        </label>
-        <button onClick={exportXlsx} style={{ padding: 8 }}>
-          Exportovat XLSX
-        </button>
-      </div>
+    <main style={{ padding: "1rem" }}>
+      <h1>Admin – Přehled docházky</h1>
+      <label>
+        Měsíc:
+        <input
+          type="month"
+          value={month}
+          onChange={(e) => setMonth(e.target.value)}
+          style={{ marginLeft: "0.5rem" }}
+        />
+      </label>
+      <button onClick={exportXLSX} style={{ marginLeft: "1rem", padding: "0.5rem 1rem" }}>
+        Exportovat XLSX
+      </button>
+      <table style={{ marginTop: "1rem", borderCollapse: "collapse" }}>
+        <thead>
+          <tr>
+            <th style={{ borderBottom: "1px solid #ddd", padding: "0.5rem" }}>Jméno</th>
+            <th style={{ borderBottom: "1px solid #ddd", padding: "0.5rem" }}>
+              Odpracováno (15m)
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {profiles.map((p) => (
+            <tr key={p.user_id}>
+              <td style={{ borderBottom: "1px solid #ddd", padding: "0.5rem" }}>
+                {p.full_name}
+              </td>
+              <td style={{ borderBottom: "1px solid #ddd", padding: "0.5rem" }}>
+                {formatMsToHHMM(computeUserSummary(p.user_id))}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </main>
   );
 }
