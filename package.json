@@ -16,8 +16,9 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "typescript": "^5.2.0",
-    "eslint": "8.45.0",
-    "eslint-config-next": "14.0.3"
-  }
+    "typescript": "5.1.6",
+  "@types/react": "^18.2.0",
+  "@types/node": "^20.5.0",
+  "eslint": "8.37.0",
+  "eslint-config-next": "13.4.10"  }
 }
