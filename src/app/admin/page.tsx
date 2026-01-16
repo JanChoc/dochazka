@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
-import { supabase } from "@/lib/supabase";
-import { formatMsToHHMM, roundDownTo15Minutes } from "@/lib/time";
+import { supabase } from/ "@/lib/supabase";
+import { formatMsToHHMM, roundDownT/o15Minutes } from "@/lib/time";
 import * as XLSX from "xlsx";
 
 export default function AdminPage() {
