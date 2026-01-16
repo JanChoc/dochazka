@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { supabase } from "../lib/supabase;"
 
 type Shift = { id: string; start_at: string; end_at: string | null };
 
